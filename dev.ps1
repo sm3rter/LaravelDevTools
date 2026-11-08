@@ -20,9 +20,6 @@ function Show-HomeScreen {
     $items = @()
     $items += @{ label = 'Projects'; note = "$projCount, $running running"; color = 'Green' }
     $items += @{ label = 'Git'; note = ''; color = 'Cyan' }
-    $ghNote = (Get-GhUser)
-    if (-not $online) { $ghNote = 'offline' }
-    $items += @{ label = 'GitHub'; note = $ghNote; color = 'Cyan' }
     $items += @{ label = 'Backup'; note = (Get-BackupDir); color = 'Cyan' }
     $items += @{ label = 'Zip project'; note = ''; color = 'DarkGray' }
     $items += @{ label = 'Apply patches'; note = ''; color = 'DarkGray' }
@@ -46,7 +43,6 @@ function Show-HomeScreen {
     $label = $items[$i].label
     if     ($label -eq 'Projects') { Open-Loc @{ type = 'projects'; name = $null } }
     elseif ($label -eq 'Git') { $p = Select-ProjectModal 'Git - pick a project'; if ($p) { Invoke-GitMenu $p } }
-    elseif ($label -eq 'GitHub') { Open-Loc @{ type = 'repos'; name = $null } }
     elseif ($label -eq 'Backup') { Open-Loc @{ type = 'backup'; name = $null } }
     elseif ($label -eq 'Zip project') { $p = Select-ProjectModal 'Zip project - pick a project'; if ($p) { [void](Invoke-ZipProject $p); $script:HubFlash = $script:ZipResult } }
     elseif ($label -eq 'Apply patches') { $p = Select-ProjectModal 'Apply patches - pick a project'; if ($p) { [void](Invoke-ApplyPatches $p); Pause-Key } }
@@ -155,7 +151,6 @@ try {
     elseif ($cmd -eq 'stop')     { Invoke-StopCmd $Name }
     elseif ($cmd -eq 'stopall')  { [void](Invoke-StopAll); Write-Host '  stopped everything' }
     elseif ($cmd -eq 'git')      { $p = Resolve-ProjectArg $Name 'Git - pick a project'; if ($p) { Invoke-GitMenu $p } }
-    elseif ($cmd -eq 'github')   { Open-Loc @{ type = 'repos'; name = $null }; Invoke-Router }
     elseif ($cmd -eq 'backup')   {
         $p = Resolve-ProjectArg $Name 'Backup - pick a project'
         if ($p) { Show-ProjectBackupMenu $p }
@@ -170,7 +165,7 @@ try {
     elseif ($cmd -eq 'ip')       { Show-NetworkInfo }
     elseif ($cmd -eq 'settings') { Open-Loc @{ type = 'settings'; name = $null }; Invoke-Router }
     elseif ($cmd -eq 'tray')     { . (Join-Path $script:LibDir 'tray.ps1') }
-    else { Write-Host 'usage: dev.bat [start|stop|git|github|backup|restore|cleanup|zip|patches|snaps|sync|clone|ip|settings|tray] [project]' }
+    else { Write-Host 'usage: dev.bat [start|stop|git|backup|restore|cleanup|zip|patches|snaps|sync|clone|ip|settings|tray] [project]' }
 }
 catch {
     Write-Log "fatal: $_`n$($_.ScriptStackTrace)"
