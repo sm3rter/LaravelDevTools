@@ -1,0 +1,27 @@
+{
+  "laragonDir": "C:\\laragon",
+  "wwwDir": "",
+  "backupDir": "C:\\Dev\\Backups",
+  "githubBackupDir": "",
+  "snapshotsDir": "",
+  "restoredDir": "",
+  "desktopDir": "",
+  "dataDir": "",
+  "githubUser": "",
+  "domainSuffix": ".test",
+  "webPort": 80,
+  "mysqlPort": 3306,
+  "mysqlUser": "root",
+  "mysqlPassword": "",
+  "editor": "code",
+  "autoSyncOnStart": true,
+  "backupExcludeNames": [
+    "node_modules"
+  ],
+  "backupExcludePaths": [
+    "storage\\logs",
+    "storage\\framework\\cache",
+    "storage\\framework\\sessions",
+    "storage\\framework\\views"
+  ]
+}

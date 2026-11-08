@@ -1,0 +1,5 @@
+config.json
+projects/*.json
+!projects/example.json
+*.log
+*.tmp
