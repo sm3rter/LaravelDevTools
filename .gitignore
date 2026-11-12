@@ -1,0 +1,8 @@
+config.json
+projects/*.json
+!projects/example.json
+*.log
+*.tmp
+tools/github/Backups/
+tools/github/Snapshots/
+tools/github/Restored/

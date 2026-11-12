@@ -1,0 +1,15 @@
+{
+  "tunnel": false,
+  "reverb": false,
+  "reverbTunnel": false,
+  "schedule": false,
+  "stripe": "/api/webhook/stripe",
+  "ngrok": { "domain": "your-name.ngrok-free.dev" },
+  "build": false,
+  "openEditor": true,
+  "stopWithEditor": false,
+  "workerStuckMinutes": 15,
+  "host": "",
+  "url": "",
+  "https": false
+}
