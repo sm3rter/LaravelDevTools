@@ -19,6 +19,7 @@ function Show-HomeScreen {
 
     $items = @()
     $items += @{ label = 'Projects'; note = "$projCount, $running running"; color = 'Green' }
+    if ($running -gt 0) { $items += @{ label = 'Running'; note = "$running project(s) - stop / control"; color = 'Yellow' } }
     $items += @{ label = 'Git'; note = ''; color = 'Cyan' }
     $items += @{ label = 'Backup'; note = (Get-BackupDir); color = 'Cyan' }
     $items += @{ label = 'Zip project'; note = ''; color = 'DarkGray' }
@@ -42,6 +43,7 @@ function Show-HomeScreen {
 
     $label = $items[$i].label
     if     ($label -eq 'Projects') { Open-Loc @{ type = 'projects'; name = $null } }
+    elseif ($label -eq 'Running') { Invoke-StopCmd '' }
     elseif ($label -eq 'Git') { $p = Select-ProjectModal 'Git - pick a project'; if ($p) { Invoke-GitMenu $p } }
     elseif ($label -eq 'Backup') { Open-Loc @{ type = 'backup'; name = $null } }
     elseif ($label -eq 'Zip project') { $p = Select-ProjectModal 'Zip project - pick a project'; if ($p) { [void](Invoke-ZipProject $p); $script:HubFlash = $script:ZipResult } }
@@ -132,7 +134,7 @@ function Invoke-StopCmd([string]$ProjName) {
 
 $script:Quiet = $true
 $cmd = $Command.ToLower()
-$noSync = @('stop', 'stopall', 'ip', 'tray', 'sync', 'settings')
+$noSync = @('stop', 'stopall', 'ip', 'tray', 'sync', 'settings', 'supervise')
 if (($noSync -notcontains $cmd) -and (Get-Command git -ErrorAction SilentlyContinue)) {
     try { Invoke-AutoSync } catch { Write-Log "auto sync error: $_" }
 }
@@ -148,6 +150,7 @@ try {
         } else { Open-Loc @{ type = 'projects'; name = $null } }
         Invoke-Router
     }
+    elseif ($cmd -eq 'supervise') { Invoke-Supervisor }
     elseif ($cmd -eq 'stop')     { Invoke-StopCmd $Name }
     elseif ($cmd -eq 'stopall')  { [void](Invoke-StopAll); Write-Host '  stopped everything' }
     elseif ($cmd -eq 'git')      { $p = Resolve-ProjectArg $Name 'Git - pick a project'; if ($p) { Invoke-GitMenu $p } }

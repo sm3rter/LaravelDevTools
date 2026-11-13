@@ -133,6 +133,7 @@ function Show-Menu {
 
     $lw = 0
     foreach ($r in $rows) { if ($r.Label.Length -gt $lw) { $lw = $r.Label.Length } }
+    try { while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) } } catch { }
 
     $sel = [Math]::Min([Math]::Max($Start, 0), $count - 1)
     if (-not $rows[$sel].Enabled) { $sel = Step-MenuSel $rows $sel 1 }
@@ -323,7 +324,7 @@ function Show-Busy([string]$Text) {
     Write-Host ''
     Write-Host ('  >>  ' + $Text + ' ...') -ForegroundColor Cyan
     Write-Host ''
-    Write-Host '      Please wait - the tool is working, it is NOT frozen.' -ForegroundColor DarkGray
+    Write-Host '      Working - please wait. It is NOT frozen. Keys are ignored until it is done.' -ForegroundColor Yellow
     Write-Host '      You come back to the menu by itself when it is done.' -ForegroundColor DarkGray
 }
 

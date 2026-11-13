@@ -206,9 +206,9 @@ function Stop-MysqlIfIdle {
     $o = Read-JsonFile $script:MysqlFile
     $mpid = $null
     if ($o) { $mpid = $o.pid }
-    if (Test-PortOpen ([int](Get-Cfg 'mysqlPort'))) {
+    if ($mpid -and (Test-SvcPid $mpid) -and (Test-PortOpen ([int](Get-Cfg 'mysqlPort')))) {
         if (Stop-MysqlGraceful) { Start-Sleep -Seconds 2 }
-        elseif ($mpid -and (Test-PidAlive $mpid)) { Invoke-TaskKill $mpid; Write-Log '[mysql] force killed' }
+        elseif ($mpid -and (Test-SvcPid $mpid)) { Invoke-TaskKill $mpid; Write-Log '[mysql] force killed' }
     }
     Remove-Item -LiteralPath $script:MysqlFile -Force -ErrorAction SilentlyContinue
 }

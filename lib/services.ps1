@@ -6,7 +6,9 @@ function Read-State($p) {
     if (-not $o) { return $null }
     $pids = @{}
     if ($o.pids) { foreach ($x in $o.pids.PSObject.Properties) { $pids[$x.Name] = [int]$x.Value } }
-    return @{ name = $o.name; launcher_pid = $o.launcher_pid; port = $o.port; reverb_port = $o.reverb_port; url = $o.url; reverb_url = $o.reverb_url; pids = $pids }
+    $svc = @{}
+    if ($o.svc) { foreach ($x in $o.svc.PSObject.Properties) { $svc[$x.Name] = @{ kind = [string]$x.Value.kind; arg = $x.Value.arg } } }
+    return @{ name = $o.name; launcher_pid = $o.launcher_pid; port = $o.port; reverb_port = $o.reverb_port; url = $o.url; reverb_url = $o.reverb_url; pids = $pids; svc = $svc; editor_since = $o.editor_since }
 }
 function Save-State($p, $st) {
     New-Item -ItemType Directory -Force -Path $p.Data | Out-Null
@@ -28,7 +30,7 @@ function Get-Status($p) {
     $st = Read-State $p
     if (-not $st) { return $null }
     if (Test-PidAlive $st.launcher_pid) { return 'running' }
-    foreach ($v in $st.pids.Values) { if (Test-PidAlive $v) { return 'orphan' } }
+    foreach ($v in $st.pids.Values) { if (Test-SvcPid $v) { return 'orphan' } }
     Remove-Item -LiteralPath $p.StateFile -Force -ErrorAction SilentlyContinue
     return $null
 }
@@ -79,42 +81,58 @@ function Test-Svc($p, [string]$Id) {
     $st = Read-State $p
     if (-not $st) { return $false }
     if (-not $st.pids.ContainsKey($Id)) { return $false }
-    return (Test-PidAlive $st.pids[$Id])
+    return (Test-SvcPid $st.pids[$Id])
 }
 function Test-AnySvc($p, [string]$Pattern) {
     $st = Read-State $p
     if (-not $st) { return $false }
-    foreach ($k in $st.pids.Keys) { if (($k -like $Pattern) -and (Test-PidAlive $st.pids[$k])) { return $true } }
+    foreach ($k in $st.pids.Keys) { if (($k -like $Pattern) -and (Test-SvcPid $st.pids[$k])) { return $true } }
     return $false
 }
 
+$script:SupFile = Join-Path $script:DataDir 'supervisor.json'
+
+function Get-SupervisorPid {
+    $o = Read-JsonFile $script:SupFile
+    if ($o -and $o.pid -and (Test-SvcPid $o.pid)) { return [int]$o.pid }
+    return 0
+}
+
+function Start-Supervisor {
+    $sp = Get-SupervisorPid
+    if ($sp) { return $sp }
+    $exe = (Get-Process -Id $PID).Path
+    $dev = Join-Path $script:Root 'dev.ps1'
+    $proc = Start-Process -FilePath $exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $dev + '"'), 'supervise') -WindowStyle Hidden -PassThru
+    New-Item -ItemType Directory -Force -Path $script:DataDir | Out-Null
+    Write-JsonFile $script:SupFile @{ pid = $proc.Id }
+    Write-Log "supervisor started (pid $($proc.Id))"
+    return $proc.Id
+}
+
 function Initialize-ProjectState($p) {
+    $sp = Start-Supervisor
     $st = Read-State $p
     if ($st) {
-        if (-not (Test-PidAlive $st.launcher_pid)) { $st.launcher_pid = $PID; Save-State $p $st }
+        if ($st.launcher_pid -ne $sp) { $st.launcher_pid = $sp; Save-State $p $st }
         return
     }
     New-Item -ItemType Directory -Force -Path $p.Data | Out-Null
-    Save-State $p @{ name = $p.Name; launcher_pid = $PID; port = $null; reverb_port = $null; url = $null; reverb_url = $null; pids = @{} }
+    Save-State $p @{ name = $p.Name; launcher_pid = $sp; port = $null; reverb_port = $null; url = $null; reverb_url = $null; pids = @{}; svc = @{}; editor_since = $null }
 }
 
 function Stop-Svc($p, [string]$Pattern, [bool]$KeepState = $false) {
-    foreach ($key in @($script:Svc.Keys)) {
-        if (($script:Svc[$key].P.Name -eq $p.Name) -and ($script:Svc[$key].Id -like $Pattern)) { $script:Svc.Remove($key) }
-    }
     $st = Read-State $p
     if (-not $st) { return }
+    $kill = @()
     foreach ($k in @($st.pids.Keys)) {
-        if ($k -like $Pattern) {
-            Invoke-TaskKill $st.pids[$k]
-            $st.pids.Remove($k)
-            Write-Log "[kill] $k" $p
-        }
+        if ($k -like $Pattern) { $kill += ,@($k, $st.pids[$k]); $st.pids.Remove($k) }
     }
-    if (($st.pids.Count -eq 0) -and (-not $KeepState)) {
-        Remove-Item -LiteralPath $p.StateFile -Force -ErrorAction SilentlyContinue
-        Stop-MysqlIfIdle
-    } else { Save-State $p $st }
+    foreach ($k in @($st.svc.Keys)) { if ($k -like $Pattern) { $st.svc.Remove($k) } }
+    $gone = (($st.pids.Count -eq 0) -and (-not $KeepState))
+    if ($gone) { Remove-Item -LiteralPath $p.StateFile -Force -ErrorAction SilentlyContinue } else { Save-State $p $st }
+    foreach ($e in $kill) { Invoke-TaskKill $e[1]; Write-Log "[kill] $($e[0])" $p }
+    if ($gone) { Stop-MysqlIfIdle }
 }
 
 function Stop-Project($p, [bool]$StopMysql = $true) {
@@ -305,7 +323,10 @@ function Get-ReverbEnvValues($p, [string]$HostName, [int]$Port, [string]$Scheme)
 }
 
 function Register-Svc($p, [string]$Id, [string]$Kind, $Arg, $Proc) {
-    $script:Svc["$($p.Name)|$Id"] = @{ P = $p; Id = $Id; Kind = $Kind; Arg = $Arg; Proc = $Proc }
+    $st = Read-State $p
+    if (-not $st) { return }
+    $st.svc[$Id] = @{ kind = $Kind; arg = $Arg }
+    Save-State $p $st
 }
 
 $script:HealthLast = @{}
@@ -348,73 +369,75 @@ function Test-WorkersHealth($p) {
     }
 }
 
+$script:RestartTry = @{}
 function Invoke-Watchdog {
-    foreach ($key in @($script:Svc.Keys)) {
-        $e = $script:Svc[$key]
-        if (-not $e) { continue }
-        if (-not (Test-Active $e.P)) { $script:Svc.Remove($key); continue }
-        if ((-not $e.Proc) -or $e.Proc.HasExited) {
-            Write-Log "[watchdog] $($e.Id) is down -> restarting" $e.P
-            try {
-                if     ($e.Kind -eq 'worker')    { $e.Proc = Start-Worker $e.P $e.Arg }
-                elseif ($e.Kind -eq 'reverb')    { $e.Proc = Start-Reverb $e.P $e.Arg }
-                elseif ($e.Kind -eq 'scheduler') { $e.Proc = Start-Scheduler $e.P }
-                elseif ($e.Kind -eq 'stripe')    { $e.Proc = Start-Stripe $e.P }
-                elseif ($e.Kind -eq 'ngrok')     { $e.Proc = Start-Ngrok $e.P }
-            } catch { Write-Log "[watchdog] restart failed: $_" $e.P }
-        }
-    }
-
     foreach ($tp in @(Get-Tracked)) {
+        $st = Read-State $tp
+        if (-not $st) { continue }
+        foreach ($id in @($st.svc.Keys)) {
+            if (Test-Svc $tp $id) { continue }
+            $key = $tp.Name + '|' + $id
+            if ($script:RestartTry.ContainsKey($key) -and (((Get-Date) - $script:RestartTry[$key]).TotalSeconds -lt 15)) { continue }
+            $script:RestartTry[$key] = Get-Date
+            $e = $st.svc[$id]
+            Write-Log "[watchdog] $id is down -> restarting" $tp
+            try {
+                if     ($e.kind -eq 'worker')    { [void](Start-Worker $tp $e.arg) }
+                elseif ($e.kind -eq 'reverb')    { [void](Start-Reverb $tp ([int]$e.arg)) }
+                elseif ($e.kind -eq 'scheduler') { [void](Start-Scheduler $tp) }
+                elseif ($e.kind -eq 'stripe')    { [void](Start-Stripe $tp) }
+                elseif ($e.kind -eq 'ngrok')     { [void](Start-Ngrok $tp) }
+            } catch { Write-Log "[watchdog] restart failed: $_" $tp }
+        }
+
         $k = $tp.Name
-        if ($script:HealthLast.ContainsKey($k) -and (((Get-Date) - $script:HealthLast[$k]).TotalSeconds -lt 60)) { continue }
-        $script:HealthLast[$k] = Get-Date
-        try { Test-WorkersHealth $tp } catch { Write-Log "[health] check failed: $_" $tp }
-    }
+        if ((-not $script:HealthLast.ContainsKey($k)) -or (((Get-Date) - $script:HealthLast[$k]).TotalSeconds -ge 60)) {
+            $script:HealthLast[$k] = Get-Date
+            try { Test-WorkersHealth $tp } catch { Write-Log "[health] check failed: $_" $tp }
+        }
 
-    foreach ($name in @($script:EditorWatch.Keys)) {
-        $since = $script:EditorWatch[$name]
-        if ((((Get-Date) - $since).TotalSeconds -gt 40) -and (-not (Get-Process -Name 'Code', 'Cursor' -ErrorAction SilentlyContinue))) {
-            $pp = New-Project $name
-            Write-Log 'editor closed -> stopping everything' $pp
-            Stop-Project $pp
+        if ($st.editor_since) {
+            $since = [datetime]::MinValue
+            if ([datetime]::TryParse([string]$st.editor_since, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$since)) {
+                if ((((Get-Date) - $since).TotalSeconds -gt 40) -and (-not (Get-Process -Name 'Code', 'Cursor' -ErrorAction SilentlyContinue))) {
+                    Write-Log 'editor closed -> stopping everything' $tp
+                    Stop-Project $tp
+                }
+            }
         }
     }
 }
-$script:GlobalTick = { Invoke-Watchdog }
 
-function Confirm-Exit {
-    $mine = @()
-    foreach ($q in @(Get-Tracked)) {
-        $s = Read-State $q
-        if ($s -and ($s.launcher_pid -eq $PID)) { $mine += $q }
-    }
-    if ($mine.Count -eq 0) { return $true }
-    Clear-Host
-    Write-Host ''
-    Write-Host '  Services are still running:' -ForegroundColor Yellow
-    foreach ($q in $mine) { Write-Host ('    {0,-24} {1}' -f $q.Name, (Get-SvcSummary $q)) -ForegroundColor Yellow }
-    Write-Host ''
-    Write-Host '    ENTER = stop everything and exit'
-    Write-Host '    K     = keep them running and exit (no auto-restart any more; stop later with: dev.bat stop)'
-    Write-Host '    Esc   = stay'
+function Invoke-Supervisor {
+    New-Item -ItemType Directory -Force -Path $script:DataDir | Out-Null
+    Write-JsonFile $script:SupFile @{ pid = $PID }
+    Write-Log "supervisor running (pid $PID)"
+    $idle = 0
     while ($true) {
-        $k = [Console]::ReadKey($true)
-        if ($k.Key -eq 'Enter') {
-            foreach ($q in $mine) { Stop-Project $q $false }
-            Stop-MysqlIfIdle
-            return $true
+        try { Invoke-Watchdog } catch { Write-Log "[supervisor] $_" }
+        $active = 0
+        foreach ($tp in @(Get-Tracked)) {
+            $s = Read-State $tp
+            if (-not $s) { continue }
+            $fresh = $false
+            if (Test-Path -LiteralPath $tp.StateFile) { $fresh = (((Get-Date) - (Get-Item -LiteralPath $tp.StateFile).LastWriteTime).TotalSeconds -lt 120) }
+            if (($s.svc.Count -gt 0) -or $fresh) { $active++ }
         }
-        if ($k.Key -eq 'K') { return $true }
-        if ($k.Key -eq 'Escape') { return $false }
+        if ($active -eq 0) { $idle++ } else { $idle = 0 }
+        if ($idle -ge 12) { break }
+        Start-Sleep -Seconds 5
     }
+    Remove-Item -LiteralPath $script:SupFile -Force -ErrorAction SilentlyContinue
+    Write-Log 'supervisor exit (nothing left to watch)'
 }
+
+function Confirm-Exit { return $true }
 
 function Get-SvcSummary($p) {
     $st = Read-State $p
     if (-not $st) { return '' }
     $parts = @()
-    $w = @($st.pids.Keys | Where-Object { ($_ -like 'worker_*') -and (Test-PidAlive $st.pids[$_]) }).Count
+    $w = @($st.pids.Keys | Where-Object { ($_ -like 'worker_*') -and (Test-SvcPid $st.pids[$_]) }).Count
     if ($w -gt 0) { $parts += "workers($w)" }
     if (Test-Svc $p 'cloudflared')        { $parts += 'tunnel' }
     if (Test-Svc $p 'reverb')             { $parts += 'reverb' }
@@ -632,11 +655,13 @@ function Open-EditorHub($p) {
     $l = Resolve-EditorLauncher $ed
     if (-not $l) { return "! could not find '$ed' - set the editor in Settings" }
     try {
-        if ($l.Hidden) { Start-Process -FilePath $l.File -ArgumentList ('"' + $p.Path + '"') -WindowStyle Hidden }
-        else { Start-Process -FilePath $l.File -ArgumentList ('"' + $p.Path + '"') }
+        Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', 'start', '""', ('"' + $l.File + '"'), ('"' + $p.Path + '"')) -WindowStyle Hidden
     } catch { return "! could not start '$ed' - set the editor in Settings" }
-    if (Test-CfgFlag $p 'stopWithEditor' $false) { $script:EditorWatch[$p.Name] = Get-Date }
-    return 'editor opened'
+    if (Test-CfgFlag $p 'stopWithEditor' $false) {
+        $st = Read-State $p
+        if ($st) { $st.editor_since = (Get-Date).ToString('o', [Globalization.CultureInfo]::InvariantCulture); Save-State $p $st }
+    }
+    return 'VS Code opened'
 }
 
 function Invoke-ProjectCommand($p, [string]$Title, [string]$File, [string[]]$ArgList) {

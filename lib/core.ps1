@@ -189,7 +189,16 @@ function Test-PidAlive($ProcId) {
     return [bool](Get-Process -Id ([int]$ProcId) -ErrorAction SilentlyContinue)
 }
 
+$script:OwnProcNames = @('php', 'cloudflared', 'stripe', 'ngrok', 'mysqld', 'node', 'npm', 'cmd', 'powershell', 'pwsh', 'conhost')
+function Test-SvcPid($ProcId) {
+    if (-not $ProcId) { return $false }
+    $pr = Get-Process -Id ([int]$ProcId) -ErrorAction SilentlyContinue
+    if (-not $pr) { return $false }
+    return ($script:OwnProcNames -contains $pr.ProcessName.ToLower())
+}
+
 function Invoke-TaskKill($ProcId) {
+    if (-not (Test-SvcPid $ProcId)) { Write-Log "[kill] skipped pid $ProcId (not one of our processes)"; return }
     try { Start-Process -FilePath 'taskkill.exe' -ArgumentList '/F', '/T', '/PID', "$ProcId" -WindowStyle Hidden -Wait } catch { }
 }
 

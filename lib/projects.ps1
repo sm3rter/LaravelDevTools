@@ -107,7 +107,6 @@ function Show-ProjectScreen($Loc) {
     $valid = ($miss.Count -eq 0)
     $st = Get-Status $p
     $foreign = $false
-    if ($st) { $s = Read-State $p; if ($s -and ($s.launcher_pid -ne $PID) -and (Test-PidAlive $s.launcher_pid)) { $foreign = $true } }
     $can = $valid -and (-not $foreign)
     $why = ''
     if ($foreign) { $why = 'running in another window' } elseif (-not $valid) { $why = 'missing: ' + ($miss -join ', ') }
@@ -127,7 +126,9 @@ function Show-ProjectScreen($Loc) {
     $siteNote = $url
     if ($stNow -and $stNow.url -and ("$($stNow.url)" -ne $url)) { $siteNote = "$($stNow.url)  (tunnel)" }
     $items += @{ label = 'Open site'; note = $siteNote; color = 'Cyan'; enabled = $can }; $acts += 'site'
-    $items += @{ label = 'Open in editor'; note = ''; color = 'DarkGray' }; $acts += 'editor'
+    $edName = [string](Get-Cfg 'editor')
+    if ((-not $edName) -or ($edName -eq 'code')) { $edLabel = 'Open VS Code' } else { $edLabel = 'Open ' + $edName }
+    $items += @{ label = $edLabel; note = ''; color = 'DarkGray' }; $acts += 'editor'
 
     if (Test-AnySvc $p 'worker_*') {
         $items += @{ label = 'Restart workers'; note = 'queue:restart'; color = 'DarkGray'; enabled = $can }; $acts += 'workers_re'
