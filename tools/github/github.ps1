@@ -1430,13 +1430,11 @@ $repoActions = @(
     @{ id = 'upload';  t = 'Upload' },
     @{ id = 'open';    t = 'Open in browser' },
     @{ id = 'url';     t = 'Copy URL' },
-    @{ id = 'tree';    t = 'File tree' },
-    @{ id = 'info';    t = 'Info & languages' },
-    @{ id = 'commits'; t = 'Commit history' },
     @{ id = 'backup';  t = 'Backup (local bundle)' },
     @{ id = 'restore'; t = 'Restore from backup' },
     @{ id = 'vis';     t = 'Public / Private' },
     @{ id = 'rename';  t = 'Rename' },
+    @{ id = 'commits'; t = 'History' },
     @{ id = 'clear';   t = 'Clear';  danger = $true },
     @{ id = 'delete';  t = 'Delete'; danger = $true }
 )
@@ -1467,6 +1465,141 @@ function Get-ActionDanger {
     return $d
 }
 
+$script:RepoView = @{}
+
+function Get-RepoView {
+    param([string]$Name)
+    if ($script:RepoView.ContainsKey($Name)) { return $script:RepoView[$Name] }
+    $v = @{ tree = @(@{ t = '(no data)'; c = 'DarkGray' }); info = ''; bar = @(); leg = @() }
+    $meta = Invoke-GhJson @('api', "repos/$User/$Name")
+    if ($script:GhOk -and $meta) {
+        $vis = $meta.visibility
+        if (-not $vis) { $vis = 'public' }
+        $lic = '-'
+        if ($meta.license -and $meta.license.spdx_id) { $lic = $meta.license.spdx_id }
+        $v.info = "$vis | $($meta.default_branch) | $(Format-Size ([double]$meta.size * 1024)) | push $(Format-Date $meta.pushed_at) | $($meta.stargazers_count) stars, $($meta.forks_count) forks | $lic"
+        $tr = Invoke-GhJson @('api', "repos/$User/$Name/git/trees/$($meta.default_branch)?recursive=1")
+        if ($script:GhOk -and $tr -and $tr.tree) {
+            $tl = Get-TreeLines (Build-PathNode $Name @($tr.tree)) 0
+            $v.tree = @($tl)
+        }
+        $langs = Invoke-GhJson @('api', "repos/$User/$Name/languages")
+        if ($script:GhOk -and $langs) {
+            $inv = [System.Globalization.CultureInfo]::InvariantCulture
+            $props = @($langs.PSObject.Properties | Sort-Object Value -Descending)
+            $total = [double]0
+            foreach ($q in $props) { $total += [double]$q.Value }
+            $cols = @('Cyan', 'Yellow', 'Green', 'Magenta', 'Blue', 'Red', 'DarkCyan', 'DarkYellow')
+            $ci = 0; $bar = @(); $leg = @()
+            foreach ($q in $props) {
+                $pct = [double]0
+                if ($total -gt 0) { $pct = [double]$q.Value / $total * 100 }
+                $w = [Math]::Max(1, [int][Math]::Round($pct / 100 * 60))
+                $c = $cols[$ci % $cols.Count]
+                $bar += @{ t = ($script:BarFull * $w); c = $c }
+                $leg += @{ t = ('' + $q.Name + ' ' + $pct.ToString('0.0', $inv) + '%   '); c = $c }
+                $ci++
+            }
+            $v.bar = $bar; $v.leg = $leg
+        }
+    }
+    $script:RepoView[$Name] = $v
+    return $v
+}
+
+function Write-Segs {
+    param($Segs, [int]$W)
+    $left = $W
+    foreach ($s in @($Segs)) {
+        if ($left -le 0) { break }
+        $t = [string]$s.t
+        if ($t.Length -gt $left) { $t = $t.Substring(0, $left) }
+        Write-Host $t -NoNewline -ForegroundColor $s.c
+        $left -= $t.Length
+    }
+    Write-Host (' ' * [Math]::Max(0, $left))
+}
+
+function Show-RepoSplit {
+    param([string]$Name, [string]$Title, [string[]]$Items, [int[]]$Danger = @(), [int]$Start = 0, [bool]$CanBack = $false, [bool]$CanFwd = $false)
+    $v = Get-RepoView $Name
+    $count = $Items.Count
+    $sel = [Math]::Min([Math]::Max($Start, 0), $count - 1)
+    $tt = 0
+    [Console]::CursorVisible = $false
+    Clear-Host
+    try {
+        while ($true) {
+            $W = [Console]::WindowWidth
+            $H = [Console]::WindowHeight
+            $R = [int](($W - 4) * 0.65)
+            $LW = $W - 4 - $R
+            if ($LW -lt 30) { $LW = 30; $R = [Math]::Max(10, $W - 4 - 30) }
+            $body = [Math]::Max(5, $H - 9)
+            $maxTop = [Math]::Max(0, $v.tree.Count - $body)
+            if ($tt -gt $maxTop) { $tt = $maxTop }
+            if ($tt -lt 0) { $tt = 0 }
+            $top = 0
+            if ($sel -ge $body) { $top = $sel - $body + 1 }
+
+            [Console]::SetCursorPosition(0, 0)
+            Write-Row ''
+            Write-Row ('  ' + $Title) 'Cyan'
+            Write-Row ('  ' + ('-' * [Math]::Max(10, $W - 5))) 'DarkGray'
+            for ($n = 0; $n -lt $body; $n++) {
+                $ix = $top + $n
+                $cell = ''.PadRight($LW)
+                $fg = 'Gray'; $bg = ''
+                if ($ix -lt $count) {
+                    $lab = [string]$Items[$ix]
+                    $pre = '    '
+                    if ($ix -eq $sel) { $pre = '  > ' }
+                    $cell = ($pre + $lab)
+                    if ($cell.Length -gt $LW) { $cell = $cell.Substring(0, $LW) }
+                    $cell = $cell.PadRight($LW)
+                    $isDanger = $Danger -contains $ix
+                    if ($ix -eq $sel) {
+                        if ($isDanger) { $fg = 'White'; $bg = 'DarkRed' } else { $fg = 'Black'; $bg = 'Cyan' }
+                    }
+                    elseif ($isDanger) { $fg = 'Red' }
+                }
+                if ($bg) { Write-Host $cell -NoNewline -ForegroundColor $fg -BackgroundColor $bg }
+                else { Write-Host $cell -NoNewline -ForegroundColor $fg }
+                Write-Host ' | ' -NoNewline -ForegroundColor DarkGray
+                $ti = $tt + $n
+                if ($ti -lt $v.tree.Count) {
+                    $tl = $v.tree[$ti]
+                    $tx = [string]$tl.t
+                    if ($tx.Length -gt $R) { $tx = $tx.Substring(0, $R) }
+                    Write-Host $tx.PadRight($R) -ForegroundColor $tl.c
+                }
+                else { Write-Host (' ' * $R) }
+            }
+            Write-Row ('  ' + ('-' * [Math]::Max(10, $W - 5))) 'DarkGray'
+            Write-Segs @(@{ t = ('  ' + $v.info); c = 'Gray' }) ($W - 1)
+            Write-Segs (@(@{ t = '  '; c = 'Gray' }) + @($v.bar)) ($W - 1)
+            Write-Segs (@(@{ t = '  '; c = 'Gray' }) + @($v.leg)) ($W - 1)
+            Write-Row '  Up/Down    Enter    PgUp/PgDn: scroll tree    Left/Right: history    Backspace: up    Esc: exit' 'DarkGray'
+
+            $k = [Console]::ReadKey($true)
+            switch ($k.Key) {
+                'UpArrow'    { if ($sel -gt 0) { $sel-- } else { $sel = $count - 1 } }
+                'DownArrow'  { if ($sel -lt $count - 1) { $sel++ } else { $sel = 0 } }
+                'PageUp'     { $tt -= $body }
+                'PageDown'   { $tt += $body }
+                'Home'       { $tt = 0 }
+                'End'        { $tt = $maxTop }
+                'Enter'      { return $sel }
+                'Backspace'  { return -1 }
+                'LeftArrow'  { if ($CanBack) { return -2 } }
+                'RightArrow' { if ($CanFwd) { return -3 } }
+                'Escape'     { Clear-Host; exit }
+            }
+        }
+    }
+    finally { [Console]::CursorVisible = $true }
+}
+
 $repoLabels = Get-ActionLabels $repoActions
 $repoDanger = Get-ActionDanger $repoActions
 $snapLabels = Get-ActionLabels $snapActions
@@ -1485,6 +1618,7 @@ while ($true) {
         Write-Host ""
         Write-Host "  Loading repos..." -ForegroundColor Yellow
         $repos  = @(Get-Repos)
+        $script:RepoView = @{}
         $reload = $false
     }
 
@@ -1505,15 +1639,15 @@ while ($true) {
         $start = 0
         if ($lastSel.ContainsKey($key)) { $start = $lastSel[$key] }
 
-        $i = Show-Menu -Title ("$name   [" + $vis.ToLower() + "]") -Items $repoLabels -Danger $repoDanger -Start $start `
-            -Nav -CanBack $canBack -CanFwd $canFwd -CanUp $true `
-            -Hint "Up/Down    Enter    Left/Right: history    Backspace: up    Esc: exit"
+        if (-not $script:RepoView.ContainsKey($name)) { Clear-Host; Write-Host "  Loading..." -ForegroundColor DarkGray }
+        $i = Show-RepoSplit -Name $name -Title ("$name   [" + $vis.ToLower() + "]") -Items $repoLabels -Danger $repoDanger -Start $start -CanBack $canBack -CanFwd $canFwd
 
         if ($i -eq -2) { $script:pos--; continue }
         if ($i -eq -3) { $script:pos++; continue }
         if ($i -eq -1) { Open-Loc $mainLoc; continue }
 
         $lastSel[$key] = $i
+        $script:RepoView.Remove($name)
         switch ($repoActions[$i].id) {
             'clone'   { Invoke-Clone $name }
             'upload'  { Invoke-Upload $name }
@@ -1523,8 +1657,6 @@ while ($true) {
                 Write-Header "Copy URL"
                 Show-Ok "Copied"
             }
-            'tree'    { Show-RepoTree $name }
-            'info'    { Show-RepoInfo $name }
             'commits' { Show-RepoCommits $name }
             'backup'  { Invoke-Backup $name }
             'restore' { Invoke-Restore $name }
