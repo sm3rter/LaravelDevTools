@@ -840,6 +840,40 @@ function Get-TreeLines {
 
 # ---------------------------------------------------------------- Viewers (GitHub)
 
+function Invoke-Pages {
+    param([string]$Name)
+    Write-Header "Publish - $Name"
+    Write-Host "  Loading branches..." -ForegroundColor DarkGray
+    $meta = Invoke-GhJson @('api', "repos/$User/$Name")
+    if (-not $script:GhOk -or -not $meta) { Show-Fail ("Failed: " + $script:GhError); return }
+    $br = Invoke-GhJson @('api', "repos/$User/$Name/branches?per_page=100")
+    if (-not $script:GhOk -or -not $br) { Show-Fail "No branches (empty repo?)"; return }
+    $names = @(@($br) | ForEach-Object { "" + $_.name })
+    $def = "" + $meta.default_branch
+    $pick = 'main'
+    if ($names -notcontains 'main') { $pick = $def }
+    $ordered = @($pick) + @($names | Where-Object { $_ -ne $pick })
+    $i = Show-Menu -Title "Publish $Name - pick branch" -Items $ordered -Start 0 -Hint "Up/Down    Enter    Backspace/Left: back    Esc: exit"
+    if ($i -lt 0) { return }
+    $branch = $ordered[$i]
+    $j = Show-Menu -Title "Publish $Name ($branch) - pick folder" -Items @("/  (root)", "/docs") -Start 0 -Hint "Up/Down    Enter    Backspace/Left: back    Esc: exit"
+    if ($j -lt 0) { return }
+    $path = @('/', '/docs')[$j]
+    Write-Header "Publish - $Name"
+    Write-Host "  Publishing $branch $path ..." -ForegroundColor DarkGray
+    $null = Invoke-GhJson @('api', "repos/$User/$Name/pages")
+    if ($script:GhOk) { $verb = 'PUT' } else { $verb = 'POST' }
+    $null = Invoke-GhJson @('api', '-X', $verb, "repos/$User/$Name/pages", '-f', "source[branch]=$branch", '-f', "source[path]=$path")
+    if (-not $script:GhOk) { Show-Fail ("Failed: " + $script:GhError); return }
+    if ($Name -ieq "$User.github.io") { $url = "https://$User.github.io/" } else { $url = "https://$User.github.io/$Name/" }
+    try { Set-Clipboard $url } catch { }
+    Show-Ok "Published ($branch $path)"
+    Write-Host ""
+    Write-Host ("  " + $url) -ForegroundColor Cyan
+    Write-Host "  (URL copied. First build takes 1-2 minutes)" -ForegroundColor DarkGray
+    Wait-Key
+}
+
 function Show-RepoTree {
     param([string]$Name)
     $i = Show-Menu -Title "File tree - $Name" -Items @("Full tree", "Up to 3 levels", "Top level only") -Start 0 -Hint "Up/Down    Enter    Backspace/Left: back    Esc: exit"
@@ -1430,6 +1464,7 @@ $repoActions = @(
     @{ id = 'upload';  t = 'Upload' },
     @{ id = 'open';    t = 'Open in browser' },
     @{ id = 'url';     t = 'Copy URL' },
+    @{ id = 'pages';   t = 'Publish (GitHub Pages)' },
     @{ id = 'backup';  t = 'Backup (local bundle)' },
     @{ id = 'restore'; t = 'Restore from backup' },
     @{ id = 'vis';     t = 'Public / Private' },
@@ -1657,6 +1692,7 @@ while ($true) {
                 Write-Header "Copy URL"
                 Show-Ok "Copied"
             }
+            'pages'   { Invoke-Pages $name }
             'commits' { Show-RepoCommits $name }
             'backup'  { Invoke-Backup $name }
             'restore' { Invoke-Restore $name }
