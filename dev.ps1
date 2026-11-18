@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Position = 0)][string]$Command = 'home',
     [Parameter(Position = 1)][string]$Name
 )
@@ -12,10 +12,8 @@ foreach ($f in @('core', 'ui', 'nav', 'laragon', 'services', 'projects', 'zip', 
 }
 
 function Show-HomeScreen {
-    $online = Test-Online
     $running = @(Get-Tracked).Count
     $projCount = @(Get-Projects).Count
-    $pending = Get-PendingCount
 
     $items = @()
     $items += @{ label = 'Projects'; note = "$projCount, $running running"; color = 'Green' }
@@ -25,17 +23,14 @@ function Show-HomeScreen {
     $items += @{ label = 'Zip project'; note = ''; color = 'DarkGray' }
     $items += @{ label = 'Apply patches'; note = ''; color = 'DarkGray' }
     $items += @{ label = 'Snapshots'; note = ''; color = 'DarkGray' }
-    if ($pending -gt 0) { $items += @{ label = 'Sync'; note = "$pending waiting for internet"; color = 'Yellow' } }
     $items += @{ label = 'Tools'; note = ''; color = 'DarkGray' }
     $items += @{ label = 'Settings'; note = ''; color = 'DarkGray' }
     $items += @{ label = 'Quit'; note = ''; color = 'DarkGray' }
 
-    $net = 'online'
-    if (-not $online) { $net = 'offline: git works locally, pushes are sent when internet is back' }
     $flash = $script:HubFlash; $script:HubFlash = ''
     $fc = 'Green'; if ($flash.StartsWith('!')) { $fc = 'Red' }
     $key = 'home'
-    $m = @{ Title = 'Dev'; Subtitle = $net; Items = $items; Start = (Get-LastSel $key); Flash = $flash.TrimStart('!').Trim(); FlashColor = $fc }
+    $m = @{ Title = 'Dev'; Subtitle = ''; Items = $items; Start = (Get-LastSel $key); Flash = $flash.TrimStart('!').Trim(); FlashColor = $fc }
     $m += (Get-NavArgs $false)
     $i = Show-Menu @m
     if (Invoke-NavKey $i $null) { return }
@@ -49,7 +44,6 @@ function Show-HomeScreen {
     elseif ($label -eq 'Zip project') { $p = Select-ProjectModal 'Zip project - pick a project'; if ($p) { [void](Invoke-ZipProject $p); $script:HubFlash = $script:ZipResult } }
     elseif ($label -eq 'Apply patches') { $p = Select-ProjectModal 'Apply patches - pick a project'; if ($p) { [void](Invoke-ApplyPatches $p); Pause-Key } }
     elseif ($label -eq 'Snapshots') { Open-Loc @{ type = 'snaps'; name = $null } }
-    elseif ($label -eq 'Sync') { Show-SyncScreen }
     elseif ($label -eq 'Tools') { Open-Loc @{ type = 'tools'; name = $null } }
     elseif ($label -eq 'Settings') { Open-Loc @{ type = 'settings'; name = $null } }
     elseif ($label -eq 'Quit') { [void](Exit-Tool) }
@@ -134,11 +128,6 @@ function Invoke-StopCmd([string]$ProjName) {
 
 $script:Quiet = $true
 $cmd = $Command.ToLower()
-$noSync = @('stop', 'stopall', 'ip', 'tray', 'sync', 'settings', 'supervise')
-if (($noSync -notcontains $cmd) -and (Get-Command git -ErrorAction SilentlyContinue)) {
-    try { Invoke-AutoSync } catch { Write-Log "auto sync error: $_" }
-}
-
 try {
     if     ($cmd -eq 'home')     { Invoke-Router }
     elseif ($cmd -eq 'start')    {
@@ -176,3 +165,5 @@ catch {
     exit 1
 }
 exit 0
+
+
